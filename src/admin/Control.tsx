@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import type { AdminView } from '../../shared/types';
+import { SECONDS_MAX, SECONDS_MIN, type AdminView } from '../../shared/types';
 import { Avatar } from '../components/Avatar';
 import { Stop } from '../components/Icons';
 import { useRemaining } from '../lib/clock';
 
 const PLAYER_PREVIEW = 8;
+const DEFAULT_FIXED_SECONDS = 10;
 
 interface Props {
   view: AdminView;
@@ -122,6 +123,7 @@ export function Control({ view, emit }: Props) {
                 />
                 สุ่มลำดับคำถาม
               </label>
+              <FixedSecondsSetting view={view} emit={emit} />
             </section>
           )}
         </aside>
@@ -278,14 +280,70 @@ function Stage({ view, emit }: Props) {
 
 function HideLiveToggle({ view, emit }: Props) {
   return (
-    <label className="check">
-      <input
-        type="checkbox"
-        checked={view.settings.hideLive}
-        onChange={(e) => emit('admin:settings', { hideLive: e.target.checked })}
-      />
-      ซ่อนคะแนนสดจากจอผู้เล่นจนกว่าจะหมดเวลา
-    </label>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={view.settings.hideLive}
+          onChange={(e) => emit('admin:settings', { hideLive: e.target.checked })}
+        />
+        ซ่อนคะแนนสดจากจอผู้เล่นจนกว่าจะหมดเวลา
+      </label>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={view.settings.liveNumbers}
+          onChange={(e) => emit('admin:settings', { liveNumbers: e.target.checked })}
+        />
+        แสดงผลต่างของคำตอบแบบสดบนจอผู้เล่น (ไม่บอกว่าฝั่งไหนนำ)
+      </label>
+    </div>
+  );
+}
+
+function FixedSecondsSetting({ view, emit }: Props) {
+  const fixed = view.settings.fixedSeconds;
+  const [draft, setDraft] = useState<string | null>(null);
+
+  const commit = () => {
+    if (draft === null) return;
+    const n = Number(draft);
+    setDraft(null);
+    if (draft === '') return; // left empty: keep the current value
+    const clamped = Math.min(SECONDS_MAX, Math.max(SECONDS_MIN, n));
+    if (clamped !== fixed) emit('admin:settings', { fixedSeconds: clamped });
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={fixed !== null}
+          onChange={(e) => emit('admin:settings', { fixedSeconds: e.target.checked ? DEFAULT_FIXED_SECONDS : null })}
+        />
+        ใช้เวลาตอบเท่ากันทุกข้อ
+      </label>
+      {fixed !== null && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingLeft: 28 }}>
+          <input
+            className="input"
+            type="text"
+            inputMode="numeric"
+            maxLength={2}
+            aria-label="เวลาตอบ (วินาที)"
+            style={{ width: 56, height: 40, padding: 0, borderRadius: 10, textAlign: 'center' }}
+            value={draft ?? fixed}
+            onChange={(e) => setDraft(e.target.value.replace(/\D/g, ''))}
+            onBlur={commit}
+            onKeyDown={(e) => e.key === 'Enter' && commit()}
+          />
+          <span className="meta" style={{ fontSize: 13 }}>
+            วินาที ({SECONDS_MIN}–{SECONDS_MAX}){view.phase === 'question' ? ' · มีผลตั้งแต่ข้อถัดไป' : ''}
+          </span>
+        </div>
+      )}
+    </div>
   );
 }
 

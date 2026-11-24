@@ -45,7 +45,7 @@ export function Eliminated({ view, me, onStandings }: Props) {
           <span className="meta">
             ผลรอบที่ <b>{result.round}</b>
           </span>
-          <span className="meta">โหมดผู้ชม</span>
+          <span className="spectator-tag">โหมดผู้ชม</span>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 12 }}>

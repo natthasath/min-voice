@@ -12,6 +12,7 @@ import type {
   RoundResult,
   StandingRow,
 } from '../shared/types.js';
+import { SECONDS_MAX, SECONDS_MIN } from '../shared/types.js';
 
 const EXTEND_SECONDS = 10;
 const RECENT_LIMIT = 9;
@@ -30,6 +31,8 @@ export interface GameState {
   queue: Question[];
   qIndex: number;
   endsAt: number;
+  /** Answer time of the current round; absent in games saved before it existed. */
+  roundSeconds?: number;
   result: RoundResult | null;
   startedAt: number;
 }
@@ -54,7 +57,7 @@ export function initialState(): GameState {
     pin: newPin(),
     phase: 'lobby',
     round: 0,
-    settings: { hideLive: true, shuffle: false },
+    settings: { hideLive: true, liveNumbers: false, shuffle: false, fixedSeconds: null },
     queue: [],
     qIndex: -1,
     endsAt: 0,
@@ -183,7 +186,12 @@ export class Game {
 
   updateSettings(patch: Partial<GameSettings>) {
     if (typeof patch.hideLive === 'boolean') this.s.settings.hideLive = patch.hideLive;
+    if (typeof patch.liveNumbers === 'boolean') this.s.settings.liveNumbers = patch.liveNumbers;
     if (typeof patch.shuffle === 'boolean') this.s.settings.shuffle = patch.shuffle;
+    const secs = patch.fixedSeconds;
+    if (secs === null || (Number.isInteger(secs) && secs! >= SECONDS_MIN && secs! <= SECONDS_MAX)) {
+      this.s.settings.fixedSeconds = secs ?? null;
+    }
   }
 
   /** The question timer has no process to fire it; whoever polls after `endsAt` closes the round. */
@@ -204,7 +212,8 @@ export class Game {
     this.clearAnswers();
     this.s.result = null;
     this.s.phase = 'question';
-    this.s.endsAt = this.now + this.s.queue[this.s.qIndex].seconds * 1000;
+    this.s.roundSeconds = this.s.settings.fixedSeconds ?? this.s.queue[this.s.qIndex].seconds;
+    this.s.endsAt = this.now + this.s.roundSeconds * 1000;
   }
 
   private clearAnswers() {
@@ -251,13 +260,19 @@ export class Game {
   private liveQuestion(): LiveQuestion | null {
     const q = this.s.queue[this.s.qIndex];
     if (!q || (this.s.phase !== 'question' && this.s.phase !== 'result')) return null;
-    return { text: q.text, a: q.a, b: q.b, cat: q.cat, seconds: q.seconds, endsAt: this.s.endsAt };
+    const seconds = this.s.roundSeconds ?? q.seconds;
+    return { text: q.text, a: q.a, b: q.b, cat: q.cat, seconds, endsAt: this.s.endsAt };
   }
 
   private liveCounts() {
     const counts = { A: 0, B: 0 };
     for (const c of this.answers.values()) counts[c]++;
     return counts;
+  }
+
+  private liveGap() {
+    const { A, B } = this.liveCounts();
+    return Math.abs(A - B);
   }
 
   private winners(): PlayerPublic[] {
@@ -312,6 +327,7 @@ export class Game {
         .map((x) => this.pub(x)),
       question: this.liveQuestion(),
       liveCounts: showLive ? this.liveCounts() : null,
+      liveGap: this.s.phase === 'question' && this.s.settings.liveNumbers ? this.liveGap() : null,
       result: this.s.phase === 'result' ? this.s.result : null,
       standings,
       winners: this.winners(),
@@ -328,7 +344,12 @@ export class Game {
       phase: this.s.phase,
       serverNow: Date.now(),
       round: this.s.round,
-      settings: { ...this.s.settings },
+      // Games saved before `liveNumbers` existed lack the field.
+      settings: {
+        ...this.s.settings,
+        liveNumbers: !!this.s.settings.liveNumbers,
+        fixedSeconds: this.s.settings.fixedSeconds ?? null,
+      },
       totalPlayers: contestants.length,
       aliveCount: alive.length,
       answeredCount: alive.filter((p) => this.answers.has(p.id)).length,

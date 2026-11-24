@@ -28,12 +28,13 @@ export function QuestionScreen({ view, me, onAnswer }: Props) {
         ? 'ล็อกคำตอบแล้ว · เปลี่ยนได้จนกว่าจะหมดเวลา'
         : 'คิดให้ดี คนส่วนใหญ่จะเลือกฝั่งไหน?';
 
-  return (
-    <div className="phone">
+  // Spectators get the dark screen they already see on results, so the mode is obvious at a glance.
+  const screen = (
+    <div className={me.alive ? 'phone' : 'phone dark'}>
       <div className="row-between">
         <span className="meta">
           รอบที่ <b>{view.round}</b>
-          {!me.alive && ' · โหมดผู้ชม'}
+          {!me.alive && <span className="spectator-tag">โหมดผู้ชม</span>}
         </span>
         <span className="meta">
           เหลือ <b>{view.aliveCount}</b> / {view.totalPlayers} คน
@@ -42,13 +43,13 @@ export function QuestionScreen({ view, me, onAnswer }: Props) {
 
       <div className="timer">
         <svg width="120" height="120" viewBox="0 0 120 120" aria-hidden="true">
-          <circle cx="60" cy="60" r="54" fill="none" stroke="var(--line)" strokeWidth="6" />
+          <circle cx="60" cy="60" r="54" fill="none" stroke={me.alive ? 'var(--line)' : 'var(--dark-line)'} strokeWidth="6" />
           <circle
             cx="60"
             cy="60"
             r="54"
             fill="none"
-            stroke={seconds <= 3 ? 'var(--accent)' : 'var(--ink)'}
+            stroke={seconds <= 3 ? 'var(--accent)' : me.alive ? 'var(--ink)' : '#fff'}
             strokeWidth="6"
             strokeLinecap="round"
             strokeDasharray={RING}
@@ -93,6 +94,14 @@ export function QuestionScreen({ view, me, onAnswer }: Props) {
         })}
       </div>
 
+      {view.liveGap !== null && (
+        <div className="live-gap" aria-live="polite">
+          <span className="live-gap-label">ผลต่าง</span>
+          <span className="live-gap-num">{view.liveGap}</span>
+          <span className="live-gap-label">คน</span>
+        </div>
+      )}
+
       <div className="spacer" />
 
       <p className="lede" style={{ textAlign: 'center', fontSize: 14 }} aria-live="polite">
@@ -100,4 +109,5 @@ export function QuestionScreen({ view, me, onAnswer }: Props) {
       </p>
     </div>
   );
+  return me.alive ? screen : <div className="dark-page">{screen}</div>;
 }

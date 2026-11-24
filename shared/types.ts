@@ -101,6 +101,8 @@ export interface PlayerView {
   recent: PlayerPublic[];
   question: LiveQuestion | null;
   liveCounts: { A: number; B: number } | null;
+  /** How many more people picked one side than the other, without saying which; null when hidden. */
+  liveGap: number | null;
   result: RoundResult | null;
   standings: StandingRow[];
   winners: PlayerPublic[];
@@ -112,7 +114,10 @@ export interface AdminPlayerRow extends PlayerPublic {
 
 export interface GameSettings {
   hideLive: boolean;
+  liveNumbers: boolean;
   shuffle: boolean;
+  /** Answer time used for every question; null uses each question's own time. */
+  fixedSeconds: number | null;
 }
 
 export interface AdminView {
