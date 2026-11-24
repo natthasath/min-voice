@@ -1,15 +1,26 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { SECONDS_MAX, SECONDS_MIN, type AdminView } from '../../shared/types';
 import { Avatar } from '../components/Avatar';
+import { Audience } from './Audience';
 import { Stop } from '../components/Icons';
 import { useRemaining } from '../lib/clock';
+import { load, save } from '../lib/storage';
 
 const PLAYER_PREVIEW = 8;
-const DEFAULT_FIXED_SECONDS = 10;
+/** Per-device: this browser may be the one wired to the projector. */
+const AUTO_PRESENT_KEY = 'minvoice.autoPresent';
 
 interface Props {
   view: AdminView;
   emit: (event: string, ...args: unknown[]) => void;
+}
+
+interface StageProps extends Props {
+  autoPresent: boolean;
+  setAutoPresent: (on: boolean) => void;
+  onPresent: () => void;
+  /** Opens the next question, switching to the audience screen first when auto-present is on. */
+  onNext: () => void;
 }
 
 function clock(ms: number) {
@@ -19,11 +30,44 @@ function clock(ms: number) {
 
 export function Control({ view, emit }: Props) {
   const [error, setError] = useState<string | null>(null);
+  const [presenting, setPresenting] = useState(false);
+  const [autoPresent, setAutoPresentState] = useState(() => load(AUTO_PRESENT_KEY) !== 'off');
 
-  const start = () =>
-    emit('admin:start', (err: string | null) => {
+  const setAutoPresent = (on: boolean) => {
+    setAutoPresentState(on);
+    save(AUTO_PRESENT_KEY, on ? null : 'off');
+  };
+
+  // Fullscreen needs the click's user gesture, so it is requested here rather than when the question arrives.
+  const present = () => {
+    setPresenting(true);
+    document.documentElement.requestFullscreen?.().catch(() => {});
+  };
+  const stopPresenting = useCallback(() => {
+    setPresenting(false);
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  }, []);
+
+  // Back to the admin screen as soon as the question closes (time up, closed or skipped).
+  const prevPhase = useRef(view.phase);
+  useEffect(() => {
+    if (prevPhase.current === 'question' && view.phase !== 'question') stopPresenting();
+    prevPhase.current = view.phase;
+  }, [view.phase, stopPresenting]);
+
+  /** Starts the game or the next question; the audience screen shows the moment it opens. */
+  const openQuestion = (event: 'admin:start' | 'admin:next') => {
+    if (autoPresent) present();
+    emit(event, (err: string | null) => {
       setError(err);
+      if (err) stopPresenting();
     });
+  };
+  const start = () => openQuestion('admin:start');
+
+  if (presenting && view.phase === 'question' && view.question) {
+    return <Audience view={view} onExit={stopPresenting} />;
+  }
 
   const statusText = {
     lobby: 'รอผู้เล่น',
@@ -62,7 +106,14 @@ export function Control({ view, emit }: Props) {
 
       <div className="split">
         <section className="card stage split-main" aria-label="เวที">
-          <Stage view={view} emit={emit} />
+          <Stage
+            view={view}
+            emit={emit}
+            autoPresent={autoPresent}
+            setAutoPresent={setAutoPresent}
+            onPresent={present}
+            onNext={() => openQuestion('admin:next')}
+          />
         </section>
 
         <aside className="split-side">
@@ -114,16 +165,6 @@ export function Control({ view, emit }: Props) {
                   </div>
                 ))
               )}
-              <label className="check" style={{ paddingTop: 4 }}>
-                <input
-                  type="checkbox"
-                  checked={view.settings.shuffle}
-                  disabled={view.phase !== 'lobby'}
-                  onChange={(e) => emit('admin:settings', { shuffle: e.target.checked })}
-                />
-                สุ่มลำดับคำถาม
-              </label>
-              <FixedSecondsSetting view={view} emit={emit} />
             </section>
           )}
         </aside>
@@ -132,9 +173,11 @@ export function Control({ view, emit }: Props) {
   );
 }
 
-function Stage({ view, emit }: Props) {
+function Stage(props: StageProps) {
+  const { view, emit, onPresent, onNext } = props;
   const q = view.question;
   const left = useRemaining(view.phase === 'question' ? q?.endsAt : null);
+  const lastRound = view.aliveCount <= 1 || view.upcoming.length === 0;
 
   if (view.phase === 'lobby') {
     return (
@@ -150,7 +193,7 @@ function Stage({ view, emit }: Props) {
         <p className="meta" style={{ margin: 0, fontSize: 15, lineHeight: 1.6 }}>
           ให้ผู้เล่นเปิดลิงก์เข้าห้องบนมือถือ (ปุ่มคัดลอกด้านบน) แล้วสร้างโปรไฟล์ จากนั้นกด “เริ่มเกม”
         </p>
-        <HideLiveToggle view={view} emit={emit} />
+        <GameSettingsPanel {...props} />
       </>
     );
   }
@@ -196,9 +239,9 @@ function Stage({ view, emit }: Props) {
         </span>
         {result ? (
           <span className="stage-clock" style={{ color: 'var(--ink)', fontSize: 20 }}>
-            {result.outcome === 'void'
+            {result.outcome === 'void' && result.eliminatedIds.length === 0
               ? 'เสมอ · ทุกคนรอด'
-              : `ตกรอบ ${result.eliminatedIds.length} คน`}
+              : `${result.outcome === 'void' ? 'เสมอ · ' : ''}ตกรอบ ${result.eliminatedIds.length} คน`}
           </span>
         ) : (
           <span className="stage-clock" role="timer">
@@ -238,11 +281,11 @@ function Stage({ view, emit }: Props) {
 
       {result && result.noAnswer > 0 && (
         <span className="meta">
-          ไม่ได้ตอบ {result.noAnswer} คน{result.outcome === 'void' ? '' : ' (ตกรอบ)'}
+          ไม่ได้ตอบ {result.noAnswer} คน{result.counts.A + result.counts.B > 0 ? ' (ตกรอบ)' : ''}
         </span>
       )}
 
-      <HideLiveToggle view={view} emit={emit} />
+      <GameSettingsPanel {...props} />
 
       <div className="toolbar">
         {view.phase === 'question' ? (
@@ -257,10 +300,13 @@ function Stage({ view, emit }: Props) {
             <button type="button" className="btn btn-md btn-outline" onClick={() => emit('admin:skip')}>
               ข้ามคำถามนี้
             </button>
+            <button type="button" className="btn btn-md btn-outline" onClick={onPresent}>
+              แสดงจอผู้ชม
+            </button>
           </>
         ) : (
-          <button type="button" className="btn btn-md" onClick={() => emit('admin:next')}>
-            {view.aliveCount <= 1 || view.upcoming.length === 0 ? 'ประกาศผู้ชนะ' : 'คำถามถัดไป'}
+          <button type="button" className="btn btn-md" onClick={lastRound ? () => emit('admin:next') : onNext}>
+            {lastRound ? 'ประกาศผู้ชนะ' : 'คำถามถัดไป'}
           </button>
         )}
         <div className="spacer" />
@@ -278,9 +324,22 @@ function Stage({ view, emit }: Props) {
   );
 }
 
-function HideLiveToggle({ view, emit }: Props) {
+function GameSettingsPanel({ view, emit, autoPresent, setAutoPresent }: StageProps) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <label className="check">
+        <input type="checkbox" checked={autoPresent} onChange={(e) => setAutoPresent(e.target.checked)} />
+        เปิดจอผู้ชมเต็มจอทันทีเมื่อเริ่มคำถาม (สำหรับขึ้นจอ ไม่แสดงคะแนน)
+      </label>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={view.settings.shuffle}
+          disabled={view.phase !== 'lobby'}
+          onChange={(e) => emit('admin:settings', { shuffle: e.target.checked })}
+        />
+        สุ่มลำดับคำถาม{view.phase !== 'lobby' ? ' (ตั้งได้ก่อนเริ่มเกม)' : ''}
+      </label>
       <label className="check">
         <input
           type="checkbox"
@@ -297,52 +356,89 @@ function HideLiveToggle({ view, emit }: Props) {
         />
         แสดงผลต่างของคำตอบแบบสดบนจอผู้เล่น (ไม่บอกว่าฝั่งไหนนำ)
       </label>
+      <FixedSecondsSetting view={view} emit={emit} />
+      <WarnSecondsSetting view={view} emit={emit} />
     </div>
   );
 }
 
-function FixedSecondsSetting({ view, emit }: Props) {
-  const fixed = view.settings.fixedSeconds;
+/**
+ * A digits-only seconds box (no spin buttons) that saves on Enter or blur, clamped to [min, max].
+ * Clearing it saves null when `emptyMeans` is given (shown as the placeholder); otherwise it keeps the value.
+ */
+function SecondsInput(props: {
+  value: number | null;
+  min: number;
+  max: number;
+  label: string;
+  emptyMeans?: string;
+  onCommit: (n: number | null) => void;
+}) {
+  const { value, min, max, label, emptyMeans, onCommit } = props;
   const [draft, setDraft] = useState<string | null>(null);
 
   const commit = () => {
     if (draft === null) return;
-    const n = Number(draft);
     setDraft(null);
-    if (draft === '') return; // left empty: keep the current value
-    const clamped = Math.min(SECONDS_MAX, Math.max(SECONDS_MIN, n));
-    if (clamped !== fixed) emit('admin:settings', { fixedSeconds: clamped });
+    if (draft === '') {
+      if (emptyMeans !== undefined && value !== null) onCommit(null);
+      return;
+    }
+    const clamped = Math.min(max, Math.max(min, Number(draft)));
+    if (clamped !== value) onCommit(clamped);
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <label className="check">
-        <input
-          type="checkbox"
-          checked={fixed !== null}
-          onChange={(e) => emit('admin:settings', { fixedSeconds: e.target.checked ? DEFAULT_FIXED_SECONDS : null })}
-        />
-        ใช้เวลาตอบเท่ากันทุกข้อ
-      </label>
-      {fixed !== null && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingLeft: 28 }}>
-          <input
-            className="input"
-            type="text"
-            inputMode="numeric"
-            maxLength={2}
-            aria-label="เวลาตอบ (วินาที)"
-            style={{ width: 56, height: 40, padding: 0, borderRadius: 10, textAlign: 'center' }}
-            value={draft ?? fixed}
-            onChange={(e) => setDraft(e.target.value.replace(/\D/g, ''))}
-            onBlur={commit}
-            onKeyDown={(e) => e.key === 'Enter' && commit()}
-          />
-          <span className="meta" style={{ fontSize: 13 }}>
-            วินาที ({SECONDS_MIN}–{SECONDS_MAX}){view.phase === 'question' ? ' · มีผลตั้งแต่ข้อถัดไป' : ''}
-          </span>
-        </div>
-      )}
+    <input
+      className="input"
+      type="text"
+      inputMode="numeric"
+      maxLength={2}
+      aria-label={label}
+      placeholder={emptyMeans}
+      style={{ width: 56, height: 40, padding: 0, borderRadius: 10, textAlign: 'center' }}
+      value={draft ?? value ?? ''}
+      onChange={(e) => setDraft(e.target.value.replace(/\D/g, ''))}
+      onBlur={commit}
+      onKeyDown={(e) => e.key === 'Enter' && commit()}
+    />
+  );
+}
+
+function FixedSecondsSetting({ view, emit }: Props) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+      <span className="check">เวลาตอบทุกข้อ</span>
+      <SecondsInput
+        value={view.settings.fixedSeconds}
+        min={SECONDS_MIN}
+        max={SECONDS_MAX}
+        label="เวลาตอบทุกข้อ (วินาที)"
+        emptyMeans="–"
+        onCommit={(n) => emit('admin:settings', { fixedSeconds: n })}
+      />
+      <span className="meta" style={{ fontSize: 13 }}>
+        วินาที ({SECONDS_MIN}–{SECONDS_MAX} · เว้นว่าง = ใช้เวลาของแต่ละข้อ)
+        {view.phase === 'question' ? ' · มีผลตั้งแต่ข้อถัดไป' : ''}
+      </span>
+    </div>
+  );
+}
+
+function WarnSecondsSetting({ view, emit }: Props) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+      <span className="check">นาฬิกาผู้เล่นเปลี่ยนเป็นสีส้มใน</span>
+      <SecondsInput
+        value={view.settings.warnSeconds}
+        min={0}
+        max={SECONDS_MAX}
+        label="เปลี่ยนสีนาฬิกาเมื่อเหลือ (วินาที)"
+        onCommit={(n) => n !== null && emit('admin:settings', { warnSeconds: n })}
+      />
+      <span className="meta" style={{ fontSize: 13 }}>
+        วินาทีสุดท้าย (0 = ไม่เปลี่ยนสี)
+      </span>
     </div>
   );
 }

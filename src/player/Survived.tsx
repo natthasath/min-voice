@@ -8,6 +8,8 @@ const SURVIVOR_LIMIT = 10;
 export function Survived({ view, me }: { view: PlayerView; me: PlayerPublic }) {
   const result = view.result!;
   const isVoid = result.outcome === 'void';
+  /** A void round can still eliminate players who didn't answer. */
+  const allSurvived = isVoid && result.eliminatedIds.length === 0;
   const others = result.survivors.length - 1;
   const shown = result.survivors.slice(0, SURVIVOR_LIMIT);
   const more = result.survivors.length - shown.length;
@@ -25,13 +27,13 @@ export function Survived({ view, me }: { view: PlayerView; me: PlayerPublic }) {
 
       <div className="result-head">
         <div className={`result-badge${isVoid ? ' neutral' : ''}`}>{isVoid ? <Equal /> : <Check size={34} />}</div>
-        <h1 className="result-title">{isVoid ? 'ทุกคนรอด' : 'คุณรอด'}</h1>
+        <h1 className="result-title">{allSurvived ? 'ทุกคนรอด' : 'คุณรอด'}</h1>
         <p className="lede">
           {isVoid ? (
             <>
               ไม่มีเสียงข้างน้อยในรอบนี้
               <br />
-              ทุกคนไปต่อ เล่นรอบใหม่
+              {allSurvived ? 'ทุกคนไปต่อ เล่นรอบใหม่' : 'ทุกคนที่ตอบได้ไปต่อ เล่นรอบใหม่'}
             </>
           ) : (
             <>

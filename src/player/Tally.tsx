@@ -17,7 +17,7 @@ export function Tally({ result, myAnswer }: Props) {
         const pct = total ? Math.round((n / total) * 100) : 0;
         const win = outcome === key;
         const note =
-          outcome === 'void' ? 'เสมอ · ไม่มีใครตกรอบ' : win ? 'เสียงข้างน้อย · รอด' : 'เสียงข้างมาก · ตกรอบ';
+          outcome === 'void' ? 'เสมอ · รอดทั้งสองฝั่ง' : win ? 'เสียงข้างน้อย · รอด' : 'เสียงข้างมาก · ตกรอบ';
         return (
           <div key={key} className="tally-row">
             <div className="row-between">
@@ -38,7 +38,7 @@ export function Tally({ result, myAnswer }: Props) {
       })}
       {result.noAnswer > 0 && (
         <span className="tally-note">
-          ไม่ได้ตอบ {result.noAnswer} คน{outcome === 'void' ? '' : ' · ตกรอบ'}
+          ไม่ได้ตอบ {result.noAnswer} คน{total > 0 ? ' · ตกรอบ' : ''}
         </span>
       )}
     </div>

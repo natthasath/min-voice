@@ -327,6 +327,14 @@ app.get(
   }),
 );
 
+app.delete(
+  '/api/admin/history',
+  admin(async (_req, res) => {
+    await withDb(store.clearHistory);
+    res.json({ ok: true });
+  }),
+);
+
 app.use('/api', (_req, res) => {
   res.status(404).json({ error: 'ไม่พบ' });
 });

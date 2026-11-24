@@ -49,7 +49,7 @@ export function QuestionScreen({ view, me, onAnswer }: Props) {
             cy="60"
             r="54"
             fill="none"
-            stroke={seconds <= 3 ? 'var(--accent)' : me.alive ? 'var(--ink)' : '#fff'}
+            stroke={seconds <= view.warnSeconds ? 'var(--accent)' : me.alive ? 'var(--ink)' : '#fff'}
             strokeWidth="6"
             strokeLinecap="round"
             strokeDasharray={RING}

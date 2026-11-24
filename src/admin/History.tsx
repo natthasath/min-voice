@@ -17,13 +17,32 @@ export function History({ onUnauthorized }: { onUnauthorized: () => void }) {
       });
   }, [onUnauthorized]);
 
+  const clear = async () => {
+    if (!window.confirm('ล้างประวัติเกมทั้งหมดหรือไม่? ลบแล้วกู้คืนไม่ได้')) return;
+    try {
+      await api('DELETE', '/api/admin/history');
+      setRows([]);
+      setError(null);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) onUnauthorized();
+      else setError((e as Error).message);
+    }
+  };
+
   return (
     <>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <h1 className="page-title">ประวัติเกม</h1>
-        <p className="meta" style={{ margin: 0, fontSize: 14 }}>
-          ผลของเกมที่จบแล้ว ล่าสุดอยู่บนสุด
-        </p>
+      <div className="row-between" style={{ flexWrap: 'wrap', alignItems: 'flex-end', gap: 16 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <h1 className="page-title">ประวัติเกม</h1>
+          <p className="meta" style={{ margin: 0, fontSize: 14 }}>
+            ผลของเกมที่จบแล้ว ล่าสุดอยู่บนสุด
+          </p>
+        </div>
+        {rows && rows.length > 0 && (
+          <button type="button" className="btn btn-sm btn-ghost-danger" onClick={clear}>
+            ล้างประวัติ
+          </button>
+        )}
       </div>
 
       {error && <p className="error">{error}</p>}

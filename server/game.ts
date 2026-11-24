@@ -12,7 +12,7 @@ import type {
   RoundResult,
   StandingRow,
 } from '../shared/types.js';
-import { SECONDS_MAX, SECONDS_MIN } from '../shared/types.js';
+import { FIXED_SECONDS_DEFAULT, SECONDS_MAX, SECONDS_MIN, WARN_SECONDS_DEFAULT } from '../shared/types.js';
 
 const EXTEND_SECONDS = 10;
 const RECENT_LIMIT = 9;
@@ -57,7 +57,13 @@ export function initialState(): GameState {
     pin: newPin(),
     phase: 'lobby',
     round: 0,
-    settings: { hideLive: true, liveNumbers: false, shuffle: false, fixedSeconds: null },
+    settings: {
+      hideLive: true,
+      liveNumbers: false,
+      shuffle: false,
+      fixedSeconds: FIXED_SECONDS_DEFAULT,
+      warnSeconds: WARN_SECONDS_DEFAULT,
+    },
     queue: [],
     qIndex: -1,
     endsAt: 0,
@@ -124,14 +130,17 @@ export class Game {
     const outcome: Choice | 'void' =
       counts.A === counts.B || counts.A === 0 || counts.B === 0 ? 'void' : counts.A < counts.B ? 'A' : 'B';
 
+    // Not answering always eliminates, even in a void round, unless nobody answered at all
+    // (wiping everyone out would end the game with no winner).
+    const nobodyAnswered = noAnswer === alive.length;
     const eliminatedIds: string[] = [];
-    if (outcome !== 'void') {
-      for (const p of alive) {
-        if (this.answers.get(p.id) !== outcome) {
-          p.alive = false;
-          p.eliminatedRound = this.s.round;
-          eliminatedIds.push(p.id);
-        }
+    for (const p of alive) {
+      const a = this.answers.get(p.id);
+      const out = outcome === 'void' ? !a && !nobodyAnswered : a !== outcome;
+      if (out) {
+        p.alive = false;
+        p.eliminatedRound = this.s.round;
+        eliminatedIds.push(p.id);
       }
     }
     this.s.result = {
@@ -192,6 +201,8 @@ export class Game {
     if (secs === null || (Number.isInteger(secs) && secs! >= SECONDS_MIN && secs! <= SECONDS_MAX)) {
       this.s.settings.fixedSeconds = secs ?? null;
     }
+    const warn = patch.warnSeconds;
+    if (Number.isInteger(warn) && warn! >= 0 && warn! <= SECONDS_MAX) this.s.settings.warnSeconds = warn!;
   }
 
   /** The question timer has no process to fire it; whoever polls after `endsAt` closes the round. */
@@ -212,7 +223,7 @@ export class Game {
     this.clearAnswers();
     this.s.result = null;
     this.s.phase = 'question';
-    this.s.roundSeconds = this.s.settings.fixedSeconds ?? this.s.queue[this.s.qIndex].seconds;
+    this.s.roundSeconds = this.fixedSeconds() ?? this.s.queue[this.s.qIndex].seconds;
     this.s.endsAt = this.now + this.s.roundSeconds * 1000;
   }
 
@@ -268,6 +279,16 @@ export class Game {
     const counts = { A: 0, B: 0 };
     for (const c of this.answers.values()) counts[c]++;
     return counts;
+  }
+
+  /** Games saved before the setting existed get the default; an explicit null means per-question time. */
+  private fixedSeconds() {
+    const v = this.s.settings.fixedSeconds;
+    return v === undefined ? FIXED_SECONDS_DEFAULT : v;
+  }
+
+  private warnSeconds() {
+    return this.s.settings.warnSeconds ?? WARN_SECONDS_DEFAULT;
   }
 
   private liveGap() {
@@ -327,6 +348,7 @@ export class Game {
         .map((x) => this.pub(x)),
       question: this.liveQuestion(),
       liveCounts: showLive ? this.liveCounts() : null,
+      warnSeconds: this.warnSeconds(),
       liveGap: this.s.phase === 'question' && this.s.settings.liveNumbers ? this.liveGap() : null,
       result: this.s.phase === 'result' ? this.s.result : null,
       standings,
@@ -348,7 +370,8 @@ export class Game {
       settings: {
         ...this.s.settings,
         liveNumbers: !!this.s.settings.liveNumbers,
-        fixedSeconds: this.s.settings.fixedSeconds ?? null,
+        fixedSeconds: this.fixedSeconds(),
+        warnSeconds: this.warnSeconds(),
       },
       totalPlayers: contestants.length,
       aliveCount: alive.length,

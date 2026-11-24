@@ -31,11 +31,17 @@ export function Eliminated({ view, me, onStandings }: Props) {
     body = 'การไม่เลือกฝั่งนับเป็นการตกรอบ';
   } else {
     eyebrow = 'โหมดผู้ชม';
-    title = result.outcome === 'void' ? 'เสมอ · ทุกคนรอด' : `${result.survivors.length} คนรอดไปต่อ`;
-    body =
-      result.outcome === 'void'
-        ? 'ไม่มีเสียงข้างน้อยในรอบนี้ ทุกคนเล่นรอบใหม่'
-        : `ตกรอบเพิ่ม ${result.eliminatedIds.length} คนในรอบนี้`;
+    const out = result.eliminatedIds.length;
+    if (result.outcome !== 'void') {
+      title = `${result.survivors.length} คนรอดไปต่อ`;
+      body = `ตกรอบเพิ่ม ${out} คนในรอบนี้`;
+    } else if (out === 0) {
+      title = 'เสมอ · ทุกคนรอด';
+      body = 'ไม่มีเสียงข้างน้อยในรอบนี้ ทุกคนเล่นรอบใหม่';
+    } else {
+      title = `เสมอ · ${result.survivors.length} คนรอดไปต่อ`;
+      body = `ไม่มีเสียงข้างน้อยในรอบนี้ แต่ตกรอบ ${out} คนเพราะไม่ได้ตอบ`;
+    }
   }
 
   return (

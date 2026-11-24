@@ -118,6 +118,10 @@ export function reorderQuestions(list: Question[], ids: unknown[]) {
 
 // ---------- history ----------
 
+export async function clearHistory(db: Db) {
+  await db.query('DELETE FROM history');
+}
+
 export async function getHistory(db: Db): Promise<HistoryEntry[]> {
   const { rows } = await db.query('SELECT entry FROM history ORDER BY ended_at DESC LIMIT $1', [HISTORY_LIMIT]);
   return rows.map((r) => r.entry);

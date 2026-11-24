@@ -38,6 +38,8 @@ export const CATEGORIES = ['ศีลธรรม', 'เพศ & สังคม
 export const NAME_MAX = 16;
 export const SECONDS_MIN = 5;
 export const SECONDS_MAX = 30;
+export const WARN_SECONDS_DEFAULT = 3;
+export const FIXED_SECONDS_DEFAULT = 10;
 
 export type Choice = 'A' | 'B';
 export type Phase = 'lobby' | 'question' | 'result' | 'finished';
@@ -75,7 +77,10 @@ export interface RoundResult {
   question: LiveQuestion;
   counts: { A: number; B: number };
   noAnswer: number;
-  /** The side that survived, or 'void' when tied / unanimous / nobody answered. */
+  /**
+   * The side that survived, or 'void' when tied / unanimous / nobody answered. Players who did not
+   * answer are eliminated either way, except when nobody answered.
+   */
   outcome: Choice | 'void';
   survivors: PlayerPublic[];
   eliminatedIds: string[];
@@ -103,6 +108,7 @@ export interface PlayerView {
   liveCounts: { A: number; B: number } | null;
   /** How many more people picked one side than the other, without saying which; null when hidden. */
   liveGap: number | null;
+  warnSeconds: number;
   result: RoundResult | null;
   standings: StandingRow[];
   winners: PlayerPublic[];
@@ -118,6 +124,8 @@ export interface GameSettings {
   shuffle: boolean;
   /** Answer time used for every question; null uses each question's own time. */
   fixedSeconds: number | null;
+  /** The player timer turns the accent color in the last this-many seconds; 0 turns it off. */
+  warnSeconds: number;
 }
 
 export interface AdminView {
