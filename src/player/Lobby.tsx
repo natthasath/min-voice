@@ -93,6 +93,12 @@ export function Lobby({ view, me, onEdit }: Props) {
           <b>3</b>
           <span>ฝั่งเสียงข้างมากตกรอบ คนสุดท้ายที่เหลือคือผู้ชนะ</span>
         </div>
+        <div className="step">
+          <b>4</b>
+          <span>
+            ถ้า<b style={{ color: 'var(--accent)', fontWeight: 600 }}>ไม่ตอบ</b>ภายในเวลาที่กำหนด ตกรอบทันที
+          </span>
+        </div>
       </div>
     </div>
   );
