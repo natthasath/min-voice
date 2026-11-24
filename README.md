@@ -2,6 +2,11 @@
 
 A real-time minority-vote party game for phones. Each round offers two choices, and only the players who picked the **less popular** side survive. The majority and anyone who didn't answer are eliminated, round after round, until one survivor is left.
 
+![demo](https://img.shields.io/website?url=https%3A%2F%2Fmin-voice.vercel.app&label=demo)
+![version](https://img.shields.io/github/package-json/v/natthasath/min-voice)
+![react](https://img.shields.io/github/package-json/dependency-version/natthasath/min-voice/react)
+![vite](https://img.shields.io/github/package-json/dependency-version/natthasath/min-voice/dev/vite)
+![express](https://img.shields.io/github/package-json/dependency-version/natthasath/min-voice/express)
 ![last commit](https://img.shields.io/github/last-commit/natthasath/min-voice)
 
 ### 💎 Game Rules
