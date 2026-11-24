@@ -46,10 +46,15 @@ const SEED_QUESTIONS: Omit<Question, 'id'>[] = [
   { text: 'เมื่อกฎหมายกับศีลธรรมขัดกัน คุณจะยึดอะไร?', a: 'กฎหมาย', b: 'ศีลธรรม', cat: 'การเมือง & กฎ', seconds: 10 },
 ];
 
+/** A fresh copy of the starter question bank, with new ids. */
+export function defaultQuestions(): Question[] {
+  return SEED_QUESTIONS.map((q) => ({ ...q, id: randomUUID() }));
+}
+
 async function seed(db: Db) {
   const rows: [string, unknown][] = [
     ['admin', hashPassword(DEFAULT_ADMIN_PASSWORD, true)],
-    ['questions', SEED_QUESTIONS.map((q) => ({ ...q, id: randomUUID() }))],
+    ['questions', defaultQuestions()],
     ['game', initialState()],
   ];
   for (const [key, value] of rows) {

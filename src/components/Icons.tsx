@@ -12,6 +12,12 @@ export const ArrowRight = ({ size = 18 }) => (
   </svg>
 );
 
+export const Grip = ({ size = 16 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" strokeWidth={2.5} {...base}>
+    <path d="M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01" />
+  </svg>
+);
+
 export const Check = ({ size = 22, width = 2.5 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" strokeWidth={width} {...base}>
     <path d="M5 12l5 5 9-10" />

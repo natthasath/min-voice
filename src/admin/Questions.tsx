@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { CATEGORIES, SECONDS_MAX, SECONDS_MIN, type Question } from '../../shared/types';
-import { Plus } from '../components/Icons';
+import { Grip, Plus } from '../components/Icons';
 import { api, ApiError } from '../lib/api';
 
 const SAVE_DELAY_MS = 500;
@@ -11,6 +11,8 @@ export function Questions({ onUnauthorized }: { onUnauthorized: () => void }) {
   const [selId, setSelId] = useState<string | null>(null);
   const [save, setSave] = useState<{ state: SaveState; message?: string }>({ state: 'idle' });
   const pending = useRef<{ id: string; timer: ReturnType<typeof setTimeout>; patch: Partial<Question> } | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const dragStartOrder = useRef('');
 
   const fail = (e: unknown) => {
     if (e instanceof ApiError && e.status === 401) onUnauthorized();
@@ -105,6 +107,72 @@ export function Questions({ onUnauthorized }: { onUnauthorized: () => void }) {
     }
   };
 
+  const resetToDefaults = async () => {
+    if (!window.confirm('รีเซ็ตกลับเป็นคำถามเริ่มต้นหรือไม่? คำถามทั้งหมดที่แก้ไขหรือเพิ่มไว้จะถูกแทนที่')) return;
+    if (pending.current) {
+      clearTimeout(pending.current.timer);
+      pending.current = null;
+    }
+    try {
+      const list = await api<Question[]>('POST', '/api/admin/questions/reset');
+      setQs(list);
+      setSelId(list[0]?.id ?? null);
+      setSave({ state: 'idle' });
+    } catch (e) {
+      fail(e);
+    }
+  };
+
+  const orderKey = (list: Question[]) => list.map((q) => q.id).join();
+
+  const saveOrder = async (list: Question[]) => {
+    await flush(); // the server's reply replaces the list, so unsaved edits must land first
+    setSave({ state: 'saving' });
+    try {
+      setQs(await api<Question[]>('PUT', '/api/admin/questions/order', { ids: list.map((q) => q.id) }));
+      setSave({ state: 'saved' });
+    } catch (e) {
+      fail(e);
+    }
+  };
+
+  /** Moves question `id` so it sits at `to`; returns the new list, or null if nothing moved. */
+  const moved = (id: string, to: number) => {
+    const from = qs.findIndex((q) => q.id === id);
+    if (from < 0 || to < 0 || to >= qs.length || from === to) return null;
+    const next = qs.slice();
+    next.splice(to, 0, ...next.splice(from, 1));
+    return next;
+  };
+
+  const dragOver = (e: React.DragEvent<HTMLButtonElement>, overIndex: number) => {
+    if (!dragId) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const from = qs.findIndex((q) => q.id === dragId);
+    const rect = e.currentTarget.getBoundingClientRect();
+    const lowerHalf = e.clientY > rect.top + rect.height / 2;
+    // Only swap once the pointer crosses the middle of the hovered item, so tall items don't flicker.
+    if ((from < overIndex && !lowerHalf) || (from > overIndex && lowerHalf)) return;
+    const next = moved(dragId, overIndex);
+    if (next) setQs(next);
+  };
+
+  const dragEnd = () => {
+    setDragId(null);
+    if (orderKey(qs) !== dragStartOrder.current) saveOrder(qs);
+  };
+
+  const moveByKey = (e: React.KeyboardEvent, id: string, index: number) => {
+    if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+    e.preventDefault();
+    const next = moved(id, index + (e.key === 'ArrowUp' ? -1 : 1));
+    if (next) {
+      setQs(next);
+      saveOrder(next);
+    }
+  };
+
   const saveLabel = {
     idle: 'บันทึกอัตโนมัติ',
     saving: 'กำลังบันทึก…',
@@ -118,13 +186,18 @@ export function Questions({ onUnauthorized }: { onUnauthorized: () => void }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <h1 className="page-title">คลังคำถาม</h1>
           <p className="meta" style={{ margin: 0, fontSize: 14 }}>
-            {qs.length} คำถาม · คำถามที่ไม่มีคำตอบถูก ให้ผู้เล่นเดาใจคนส่วนใหญ่
+            {qs.length} คำถาม · คำถามที่ไม่มีคำตอบถูก ให้ผู้เล่นเดาใจคนส่วนใหญ่ · ลากเพื่อเรียงลำดับ
           </p>
         </div>
-        <button type="button" className="btn btn-sm" onClick={() => create()}>
-          <Plus />
-          เพิ่มคำถาม
-        </button>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+          <button type="button" className="btn btn-sm btn-outline" onClick={resetToDefaults}>
+            รีเซ็ตเป็นค่าเริ่มต้น
+          </button>
+          <button type="button" className="btn btn-sm" onClick={() => create()}>
+            <Plus />
+            เพิ่มคำถาม
+          </button>
+        </div>
       </div>
 
       <div className="split">
@@ -136,8 +209,25 @@ export function Questions({ onUnauthorized }: { onUnauthorized: () => void }) {
               type="button"
               className="q-item"
               aria-current={q.id === selId ? 'true' : undefined}
+              aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+              title="ลากเพื่อเรียงลำดับ หรือกด Alt + ↑/↓"
+              data-dragging={q.id === dragId ? 'true' : undefined}
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', q.id); // Firefox won't start a drag without data
+                dragStartOrder.current = orderKey(qs);
+                setDragId(q.id);
+              }}
+              onDragOver={(e) => dragOver(e, i)}
+              onDrop={(e) => e.preventDefault()}
+              onDragEnd={dragEnd}
+              onKeyDown={(e) => moveByKey(e, q.id, i)}
               onClick={() => pick(q.id)}
             >
+              <span className="q-grip">
+                <Grip />
+              </span>
               <span className="q-no">{i + 1}</span>
               <span className="q-body">
                 <span className="q-text">{q.text || 'ไม่มีข้อความ'}</span>

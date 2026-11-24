@@ -10,7 +10,7 @@ import {
   type GameSettings,
   type Question,
 } from '../shared/types.js';
-import { tx, withDb } from './db.js';
+import { defaultQuestions, tx, withDb } from './db.js';
 import type { Game } from './game.js';
 import * as store from './store.js';
 
@@ -256,6 +256,27 @@ app.post(
     res.json(
       await tx((db) => store.editQuestions(db, (list) => store.addQuestion(list, q as Omit<Question, 'id'>, afterId))),
     );
+  }),
+);
+
+app.post(
+  '/api/admin/questions/reset',
+  admin(async (_req, res) => {
+    const list = defaultQuestions();
+    res.json(await tx((db) => store.editQuestions(db, () => ({ list, out: list }))));
+  }),
+);
+
+// Registered before `/:id` so "order" is not taken as a question id.
+app.put(
+  '/api/admin/questions/order',
+  admin(async (req, res) => {
+    const ids = req.body?.ids;
+    if (!Array.isArray(ids)) {
+      res.status(400).json({ error: 'ลำดับคำถามไม่ถูกต้อง' });
+      return;
+    }
+    res.json(await tx((db) => store.editQuestions(db, (list) => store.reorderQuestions(list, ids))));
   }),
 );
 

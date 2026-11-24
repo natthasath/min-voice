@@ -103,6 +103,19 @@ export function addQuestion(list: Question[], q: Omit<Question, 'id'>, afterId?:
   return { list, out: created };
 }
 
+/**
+ * Puts questions in the order of `ids`. Unknown ids are ignored, and questions missing from `ids`
+ * (added by another admin meanwhile) keep their relative order at the end.
+ */
+export function reorderQuestions(list: Question[], ids: unknown[]) {
+  const rank = new Map(ids.map((id, i) => [id, i]));
+  const sorted = list
+    .map((q, i) => ({ q, key: rank.get(q.id) ?? ids.length + i }))
+    .sort((x, y) => x.key - y.key)
+    .map((x) => x.q);
+  return { list: sorted, out: sorted };
+}
+
 // ---------- history ----------
 
 export async function getHistory(db: Db): Promise<HistoryEntry[]> {
