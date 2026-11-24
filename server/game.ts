@@ -1,37 +1,66 @@
 import { randomInt, randomUUID } from 'node:crypto';
-import {
-  type AdminView,
-  type Choice,
-  type GameSettings,
-  type HistoryEntry,
-  type LiveQuestion,
-  type Phase,
-  type PlayerPublic,
-  type PlayerView,
-  type Question,
-  type RoundResult,
-  type StandingRow,
-} from '../shared/types';
+import type {
+  AdminView,
+  Choice,
+  GameSettings,
+  HistoryEntry,
+  LiveQuestion,
+  Phase,
+  PlayerPublic,
+  PlayerView,
+  Question,
+  RoundResult,
+  StandingRow,
+} from '../shared/types.js';
 
 const EXTEND_SECONDS = 10;
-const LOBBY_DROP_MS = 30_000;
 const RECENT_LIMIT = 9;
 const UPCOMING_LIMIT = 3;
+/** Clients poll about once a second; a player unseen for longer than this counts as offline. */
+export const ONLINE_MS = 5_000;
+/** Lobby players unseen this long are dropped (closed the tab before the game started). */
+export const LOBBY_DROP_MS = 30_000;
 
-interface Player {
+/** Everything about the current game except players and answers, stored as one JSON row. */
+export interface GameState {
+  pin: string;
+  phase: Phase;
+  round: number;
+  settings: GameSettings;
+  queue: Question[];
+  qIndex: number;
+  endsAt: number;
+  result: RoundResult | null;
+  startedAt: number;
+}
+
+export interface Player {
   id: string;
   name: string;
   color: string;
   alive: boolean;
   spectator: boolean;
   eliminatedRound: number | null;
-  sockets: number;
   joinedAt: number;
-  dropTimer?: NodeJS.Timeout;
+  lastSeen: number;
 }
 
-function newPin() {
+export function newPin() {
   return String(randomInt(0, 1_000_000)).padStart(6, '0');
+}
+
+export function initialState(): GameState {
+  return {
+    pin: newPin(),
+    phase: 'lobby',
+    round: 0,
+    settings: { hideLive: true, shuffle: false },
+    queue: [],
+    qIndex: -1,
+    endsAt: 0,
+    result: null,
+    startedAt: 0,
+  };
 }
 
 function shuffled<T>(list: T[]): T[] {
@@ -43,105 +72,45 @@ function shuffled<T>(list: T[]): T[] {
   return out;
 }
 
+/**
+ * Game rules over one loaded snapshot. Actions mutate the snapshot; the caller persists it
+ * (see `saveGame` in db.ts), including the side effects recorded in `finished`, `answersCleared`
+ * and `removed`.
+ */
 export class Game {
-  pin = newPin();
-  phase: Phase = 'lobby';
-  round = 0;
-  settings: GameSettings = { hideLive: true, shuffle: false };
-
-  private players = new Map<string, Player>();
-  private queue: Question[] = [];
-  private qIndex = -1;
-  private answers = new Map<string, Choice>();
-  private endsAt = 0;
-  private timer?: NodeJS.Timeout;
-  private result: RoundResult | null = null;
-  private startedAt = 0;
+  finished: HistoryEntry | null = null;
+  answersCleared = false;
+  removed: string[] = [];
 
   constructor(
-    private getQuestions: () => Question[],
-    private onFinish: (entry: HistoryEntry) => void,
-    private onChange: () => void,
+    public s: GameState,
+    private players: Map<string, Player>,
+    private answers: Map<string, Choice>,
+    private bank: Question[],
+    private now = Date.now(),
   ) {}
 
-  // ---------- players ----------
-
-  join(id: string | undefined, name: string, color: string): Player {
-    let p = id ? this.players.get(id) : undefined;
-    if (p) {
-      p.name = name;
-      p.color = color;
-    } else {
-      const late = this.phase !== 'lobby';
-      p = {
-        id: randomUUID(),
-        name,
-        color,
-        alive: !late,
-        spectator: late,
-        eliminatedRound: null,
-        sockets: 0,
-        joinedAt: Date.now(),
-      };
-      this.players.set(p.id, p);
-    }
-    this.onChange();
-    return p;
-  }
-
-  hasPlayer(id: string) {
-    return this.players.has(id);
-  }
-
-  connect(id: string) {
-    const p = this.players.get(id);
-    if (!p) return;
-    p.sockets++;
-    clearTimeout(p.dropTimer);
-    this.onChange();
-  }
-
-  disconnect(id: string) {
-    const p = this.players.get(id);
-    if (!p) return;
-    p.sockets = Math.max(0, p.sockets - 1);
-    if (p.sockets === 0 && this.phase === 'lobby') {
-      p.dropTimer = setTimeout(() => {
-        if (p.sockets === 0 && this.phase === 'lobby') {
-          this.players.delete(p.id);
-          this.onChange();
-        }
-      }, LOBBY_DROP_MS);
-    }
-    this.onChange();
-  }
-
-  answer(id: string, choice: Choice) {
-    const p = this.players.get(id);
-    if (this.phase !== 'question' || !p?.alive || Date.now() > this.endsAt) return;
-    this.answers.set(id, choice);
-    this.onChange();
+  get allPlayers() {
+    return [...this.players.values()];
   }
 
   // ---------- admin actions ----------
 
   start(): string | null {
-    if (this.phase !== 'lobby') return 'เกมเริ่มไปแล้ว';
-    const bank = this.getQuestions();
-    if (bank.length === 0) return 'ยังไม่มีคำถามในคลัง';
+    if (this.s.phase !== 'lobby') return 'เกมเริ่มไปแล้ว';
+    if (this.bank.length === 0) return 'ยังไม่มีคำถามในคลัง';
     if (this.contestants().length < 2) return 'ต้องมีผู้เล่นอย่างน้อย 2 คน';
-    this.queue = this.settings.shuffle ? shuffled(bank) : bank.slice();
-    this.qIndex = -1;
-    this.round = 0;
-    this.result = null;
-    this.startedAt = Date.now();
+    this.s.queue = this.s.settings.shuffle ? shuffled(this.bank) : this.bank.slice();
+    this.s.qIndex = -1;
+    this.s.round = 0;
+    this.s.result = null;
+    this.s.startedAt = this.now;
     this.nextQuestion();
     return null;
   }
 
   close() {
-    if (this.phase !== 'question') return;
-    clearTimeout(this.timer);
+    if (this.s.phase !== 'question') return;
     const alive = this.contestants().filter((p) => p.alive);
     const counts = { A: 0, B: 0 };
     for (const p of alive) {
@@ -157,13 +126,13 @@ export class Game {
       for (const p of alive) {
         if (this.answers.get(p.id) !== outcome) {
           p.alive = false;
-          p.eliminatedRound = this.round;
+          p.eliminatedRound = this.s.round;
           eliminatedIds.push(p.id);
         }
       }
     }
-    this.result = {
-      round: this.round,
+    this.s.result = {
+      round: this.s.round,
       question: this.liveQuestion()!,
       counts,
       noAnswer,
@@ -171,101 +140,100 @@ export class Game {
       survivors: alive.filter((p) => p.alive).map((p) => this.pub(p)),
       eliminatedIds,
     };
-    this.phase = 'result';
-    this.onChange();
+    this.s.phase = 'result';
   }
 
   extend() {
-    if (this.phase !== 'question') return;
-    this.endsAt += EXTEND_SECONDS * 1000;
-    this.schedule();
-    this.onChange();
+    if (this.s.phase !== 'question') return;
+    this.s.endsAt += EXTEND_SECONDS * 1000;
   }
 
   skip() {
-    if (this.phase !== 'question') return;
-    this.round--;
+    if (this.s.phase !== 'question') return;
+    this.s.round--;
     this.nextQuestion();
   }
 
   next() {
-    if (this.phase !== 'result') return;
+    if (this.s.phase !== 'result') return;
     this.nextQuestion();
   }
 
   end() {
-    if (this.phase === 'question' || this.phase === 'result') this.finish();
+    if (this.s.phase === 'question' || this.s.phase === 'result') this.finish();
   }
 
   reset() {
-    clearTimeout(this.timer);
-    for (const p of [...this.players.values()]) {
-      if (p.sockets === 0) {
+    for (const p of this.allPlayers) {
+      if (!this.online(p)) {
         this.players.delete(p.id);
+        this.removed.push(p.id);
         continue;
       }
       p.alive = true;
       p.spectator = false;
       p.eliminatedRound = null;
     }
-    this.pin = newPin();
-    this.phase = 'lobby';
-    this.round = 0;
-    this.result = null;
-    this.answers.clear();
-    this.onChange();
+    this.s.pin = newPin();
+    this.s.phase = 'lobby';
+    this.s.round = 0;
+    this.s.result = null;
+    this.clearAnswers();
   }
 
   updateSettings(patch: Partial<GameSettings>) {
-    if (typeof patch.hideLive === 'boolean') this.settings.hideLive = patch.hideLive;
-    if (typeof patch.shuffle === 'boolean') this.settings.shuffle = patch.shuffle;
-    this.onChange();
+    if (typeof patch.hideLive === 'boolean') this.s.settings.hideLive = patch.hideLive;
+    if (typeof patch.shuffle === 'boolean') this.s.settings.shuffle = patch.shuffle;
+  }
+
+  /** The question timer has no process to fire it; whoever polls after `endsAt` closes the round. */
+  get due() {
+    return this.s.phase === 'question' && this.now >= this.s.endsAt;
   }
 
   // ---------- flow ----------
 
   private nextQuestion() {
-    clearTimeout(this.timer);
     const aliveCount = this.contestants().filter((p) => p.alive).length;
-    if (aliveCount <= 1 || this.qIndex + 1 >= this.queue.length) {
+    if (aliveCount <= 1 || this.s.qIndex + 1 >= this.s.queue.length) {
       this.finish();
       return;
     }
-    this.qIndex++;
-    this.round++;
-    this.answers.clear();
-    this.result = null;
-    this.phase = 'question';
-    this.endsAt = Date.now() + this.queue[this.qIndex].seconds * 1000;
-    this.schedule();
-    this.onChange();
+    this.s.qIndex++;
+    this.s.round++;
+    this.clearAnswers();
+    this.s.result = null;
+    this.s.phase = 'question';
+    this.s.endsAt = this.now + this.s.queue[this.s.qIndex].seconds * 1000;
   }
 
-  private schedule() {
-    clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.close(), Math.max(0, this.endsAt - Date.now()));
+  private clearAnswers() {
+    this.answers.clear();
+    this.answersCleared = true;
   }
 
   private finish() {
-    clearTimeout(this.timer);
-    this.phase = 'finished';
+    this.s.phase = 'finished';
     const standings = this.standings();
-    this.onFinish({
+    this.finished = {
       id: randomUUID(),
-      startedAt: this.startedAt,
-      endedAt: Date.now(),
-      rounds: this.round,
+      startedAt: this.s.startedAt,
+      endedAt: this.now,
+      rounds: this.s.round,
       players: this.contestants().length,
       winners: this.winners().map((p) => p.name),
       top: standings.slice(0, 10).map((r) => ({ rank: r.rank, name: r.player.name, label: r.label })),
-    });
-    this.onChange();
+    };
   }
 
   // ---------- derived ----------
 
+  private online(p: Player) {
+    return this.now - p.lastSeen < ONLINE_MS;
+  }
+
   private contestants() {
-    return [...this.players.values()].filter((p) => !p.spectator);
+    return this.allPlayers.filter((p) => !p.spectator);
   }
 
   private pub(p: Player): PlayerPublic {
@@ -276,14 +244,14 @@ export class Game {
       alive: p.alive,
       spectator: p.spectator,
       eliminatedRound: p.eliminatedRound,
-      online: p.sockets > 0,
+      online: this.online(p),
     };
   }
 
   private liveQuestion(): LiveQuestion | null {
-    const q = this.queue[this.qIndex];
-    if (!q || (this.phase !== 'question' && this.phase !== 'result')) return null;
-    return { text: q.text, a: q.a, b: q.b, cat: q.cat, seconds: q.seconds, endsAt: this.endsAt };
+    const q = this.s.queue[this.s.qIndex];
+    if (!q || (this.s.phase !== 'question' && this.s.phase !== 'result')) return null;
+    return { text: q.text, a: q.a, b: q.b, cat: q.cat, seconds: q.seconds, endsAt: this.s.endsAt };
   }
 
   private liveCounts() {
@@ -293,7 +261,7 @@ export class Game {
   }
 
   private winners(): PlayerPublic[] {
-    if (this.phase !== 'finished') return [];
+    if (this.s.phase !== 'finished') return [];
     return this.contestants()
       .filter((p) => p.alive)
       .map((p) => this.pub(p));
@@ -301,7 +269,7 @@ export class Game {
 
   /** Alive players share first place; the eliminated rank by how late they fell (competition ranking). */
   private standings(): StandingRow[] {
-    const finished = this.phase === 'finished';
+    const finished = this.s.phase === 'finished';
     const sorted = this.contestants().sort((x, y) => {
       const xr = x.alive ? Infinity : (x.eliminatedRound ?? 0);
       const yr = y.alive ? Infinity : (y.eliminatedRound ?? 0);
@@ -326,25 +294,25 @@ export class Game {
     const p = id ? this.players.get(id) : undefined;
     const contestants = this.contestants();
     const standings = this.standings();
-    const showLive = this.phase === 'question' && !this.settings.hideLive;
+    const showLive = this.s.phase === 'question' && !this.s.settings.hideLive;
     return {
-      pin: this.pin,
-      phase: this.phase,
+      pin: this.s.pin,
+      phase: this.s.phase,
       serverNow: Date.now(),
-      round: this.round,
+      round: this.s.round,
       me: p ? this.pub(p) : null,
       myAnswer: p ? (this.answers.get(p.id) ?? null) : null,
       myRank: p ? (standings.find((r) => r.player.id === p.id)?.rank ?? null) : null,
       totalPlayers: contestants.length,
       aliveCount: contestants.filter((x) => x.alive).length,
       recent: contestants
-        .filter((x) => x.sockets > 0)
+        .filter((x) => this.online(x))
         .sort((x, y) => y.joinedAt - x.joinedAt)
         .slice(0, RECENT_LIMIT)
         .map((x) => this.pub(x)),
       question: this.liveQuestion(),
       liveCounts: showLive ? this.liveCounts() : null,
-      result: this.phase === 'result' ? this.result : null,
+      result: this.s.phase === 'result' ? this.s.result : null,
       standings,
       winners: this.winners(),
     };
@@ -353,14 +321,14 @@ export class Game {
   adminView(): AdminView {
     const contestants = this.contestants();
     const alive = contestants.filter((p) => p.alive);
-    const source = this.phase === 'lobby' ? this.getQuestions() : this.queue;
-    const from = this.phase === 'lobby' ? 0 : this.qIndex + 1;
+    const source = this.s.phase === 'lobby' ? this.bank : this.s.queue;
+    const from = this.s.phase === 'lobby' ? 0 : this.s.qIndex + 1;
     return {
-      pin: this.pin,
-      phase: this.phase,
+      pin: this.s.pin,
+      phase: this.s.phase,
       serverNow: Date.now(),
-      round: this.round,
-      settings: { ...this.settings },
+      round: this.s.round,
+      settings: { ...this.s.settings },
       totalPlayers: contestants.length,
       aliveCount: alive.length,
       answeredCount: alive.filter((p) => this.answers.has(p.id)).length,
@@ -373,10 +341,10 @@ export class Game {
       upcoming: source
         .slice(from, from + UPCOMING_LIMIT)
         .map((q, i) => ({ no: from + i + 1, text: q.text })),
-      result: this.result,
+      result: this.s.result,
       standings: this.standings(),
       winners: this.winners(),
-      questionBankSize: this.getQuestions().length,
+      questionBankSize: this.bank.length,
     };
   }
 }

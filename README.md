@@ -1,73 +1,118 @@
-# Min Voice — เกมเสียงข้างน้อย
+# 🎉 Min Voice
 
-เกมโหวตแบบเรียลไทม์: ทุกรอบมี 2 ตัวเลือก ฝั่งที่คนเลือก**น้อยกว่า**รอด ฝั่งเสียงข้างมากและคนที่ไม่ตอบตกรอบ
-เล่นจนเหลือผู้รอดคนเดียว
+A real-time minority-vote party game for phones. Each round offers two choices, and only the players who picked the **less popular** side survive. The majority and anyone who didn't answer are eliminated, round after round, until one survivor is left.
 
-- ผู้เล่น (มือถือ): https://min-voice.codeinsane.dev/
-- หลังบ้านแอดมิน: https://min-voice.codeinsane.dev/admin
+![last commit](https://img.shields.io/github/last-commit/natthasath/min-voice)
 
-## เริ่มใช้งาน
+### 💎 Game Rules
 
-```bash
+- Every round has two choices and a per-question timer (10 seconds by default). Players can change their answer until time runs out.
+- The side with fewer votes survives. The majority side and players who didn't answer are eliminated.
+- A 50/50 tie, a unanimous vote or no answers at all voids the round: everyone survives and a new round starts.
+- Eliminated players keep watching as spectators. Standings rank players by the round they were eliminated, and players eliminated in the same round share a rank.
+- The game ends when one player is left, the questions run out, or the admin presses "End game". Everyone still alive then shares the win.
+- Players who join mid-game watch as spectators and play in the next game.
+
+### 🧊 Tech Stack
+
+| Layer | Technology |
+| --- | --- |
+| Frontend | React 19 + Vite 8 + TypeScript |
+| API | Express 5, served as a Vercel Function |
+| Database | Neon Postgres (`@neondatabase/serverless`) |
+| Hosting | Vercel (functions in `sin1`, Singapore) |
+
+```text
+api/      Vercel Function: routes every /api/* request to the Express app (bundled from server/ at build time)
+server/   app.ts = REST API, game.ts = game rules, store.ts = Postgres reads/writes, db.ts = schema + connection
+          dev.ts = local API server for npm run dev
+shared/   types shared by client and server
+src/      React app (player/ = phone screens, admin/ = admin dashboard)
+```
+
+All game state lives in Neon Postgres, with nothing kept in memory, so the API runs safely on many serverless instances. Pages poll the state every second instead of using WebSockets. A question closes on the first poll after its timer runs out.
+
+### ✅ Requirements
+
+- [Node.js](https://nodejs.org/) and npm
+- A [Neon](https://neon.tech/) Postgres database (provisioned through the Vercel Marketplace)
+- [Vercel CLI](https://vercel.com/docs/cli) to pull environment variables and deploy
+
+---
+
+### 🚀 Installation
+
+```shell
 npm install
-npm run dev        # server :3000 + Vite :5173 (เปิด http://localhost:5173)
+vercel env pull .env.local
+npm run dev        # API on :3000 + Vite on :5173
 ```
 
-Production:
+Open [http://localhost:5173](http://localhost:5173). Tables and seed data (6 starter questions, admin password `changeme`) are created automatically on the first API call.
 
-```bash
-npm run build
-npm start          # http://localhost:3000 (PORT ปรับได้)
+### ⚙️ Configuration
+
+| Variable | Description |
+| --- | --- |
+| `DATABASE_URL` | Neon connection string. The Vercel Marketplace integration sets it automatically. Locally, it is read from `.env.local`. |
+| `PORT` | Local API port for `npm run dev` (default `3000`) |
+
+> [!WARNING]
+> If `.env.local` points at the production database, local development runs the same live game that real players see.
+
+### 🔑 Admin Credentials
+
+- The default admin password is **`changeme`**.
+- Change it in the admin dashboard → **Settings** (`/admin/settings`). This requires the current password, and the new password must be at least 8 characters.
+- The dashboard shows a warning banner while the default password is still in use.
+- Changing the password signs out every other logged-in device.
+- The password is stored as a scrypt hash with a salt in the `kv` table (key `admin`) on Neon.
+
+> [!WARNING]
+> Change the default password before sharing the game link. Anyone who knows `changeme` can control the game.
+
+### 🐳 Deployment
+
+- The Vercel project `min-voice` is connected to the Neon database `min-voice-db` (ap-southeast-1) through the Vercel Marketplace.
+
+```shell
+vercel deploy --prod
+# or build locally and upload the exact output
+vercel build --prod && vercel deploy --prebuilt --prod
 ```
 
-## รหัสผ่านแอดมิน
+The custom domain `min-voice.codeinsane.dev` uses Cloudflare DNS:
 
-- รหัสผ่านเริ่มต้นคือ **`changeme`**
-- เปลี่ยนได้ที่หลังบ้าน → **ตั้งค่า** (`/admin/settings`) ต้องใส่รหัสเดิม และรหัสใหม่ยาวอย่างน้อย 8 ตัวอักษร
-- ระหว่างที่ยังใช้รหัสเริ่มต้น หลังบ้านจะแสดงแถบเตือน
-- เปลี่ยนรหัสแล้ว อุปกรณ์อื่นที่ล็อกอินค้างไว้จะถูกออกจากระบบ
-- รหัสผ่านเก็บแบบ hash (scrypt + salt) ใน `data/store.json`
-- ลืมรหัสผ่าน: หยุดเซิร์ฟเวอร์ แล้วลบส่วน `admin` ใน `data/store.json` (หรือลบทั้งไฟล์ ซึ่งจะลบคำถามและประวัติด้วย) รหัสจะกลับเป็น `changeme`
+| Type | Name | Target | Proxy |
+| --- | --- | --- | --- |
+| CNAME | `min-voice` | `1bda39c8c7c94116.vercel-dns-017.com` | DNS only |
 
-## กติกา
+> [!IMPORTANT]
+> Turn the Cloudflare proxy off (gray cloud, "DNS only"). Otherwise Vercel cannot verify the domain or issue the HTTPS certificate.
 
-- ทุกรอบมี 2 ตัวเลือก เวลาตามที่ตั้งไว้ต่อคำถาม (ค่าเริ่มต้น 10 วินาที) เปลี่ยนคำตอบได้จนกว่าจะหมดเวลา
-- ฝั่งที่คนเลือกน้อยกว่ารอด ส่วนฝั่งที่มากกว่าและคนที่ไม่ตอบตกรอบ
-- ถ้าเสมอ 50/50 ทุกคนเลือกฝั่งเดียวกัน หรือไม่มีใครตอบ: ทุกคนรอดและเล่นรอบใหม่
-- คนที่ตกรอบดูเกมต่อในโหมดผู้ชมได้ อันดับเรียงตามรอบที่ตกรอบ (ตกรอบเดียวกันได้อันดับเท่ากัน)
-- เกมจบเมื่อเหลือ 1 คน คำถามหมด หรือแอดมินกด “จบเกม” (ผู้ที่ยังอยู่เป็นผู้ชนะร่วม)
-- คนที่เข้ามาระหว่างเกมจะดูในโหมดผู้ชม และได้เล่นในเกมถัดไป
+---
 
-## โครงสร้าง
+### 🏆 Usage
 
-```
-server/   Express + Socket.IO (game.ts = กติกา/สถานะเกม, store.ts = ไฟล์ข้อมูล + รหัสผ่าน)
-shared/   types ที่ client กับ server ใช้ร่วมกัน
-src/      React (player/ = จอมือถือ, admin/ = หลังบ้าน)
-data/     store.json (คำถาม, ประวัติเกม, hash รหัสผ่าน) สร้างอัตโนมัติ
-```
+| Role | URL |
+| --- | --- |
+| Players (phone) | [https://min-voice.codeinsane.dev/](https://min-voice.codeinsane.dev/) |
+| Admin dashboard | [https://min-voice.codeinsane.dev/admin](https://min-voice.codeinsane.dev/admin) |
 
-สถานะเกมอยู่ในหน่วยความจำของเซิร์ฟเวอร์ตัวเดียว จึงควรรันเป็น process เดียว (VPS, Docker, Railway, Fly ฯลฯ)
-ไม่เหมาะกับ serverless ที่มีหลาย instance
+1. The admin signs in, reviews the question bank and shares the player link.
+2. Players pick a nickname and a profile color, then wait in the lobby.
+3. The admin starts the game and controls each round: close early, extend the timer by 10 seconds, skip the question, go to the next question, or end the game.
 
-## Deploy ที่ min-voice.codeinsane.dev
+### 👉🏼 Try it out
 
-รัน `npm run build && npm start` (พอร์ต 3000) แล้วตั้ง reverse proxy ให้โดเมนชี้มาที่พอร์ตนี้
-**ต้องเปิด WebSocket upgrade** สำหรับ `/socket.io/` ด้วย ตัวอย่าง Nginx:
+- [https://min-voice.vercel.app](https://min-voice.vercel.app)
 
-```nginx
-server {
-  server_name min-voice.codeinsane.dev;
-  location / {
-    proxy_pass http://127.0.0.1:3000;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-  }
-}
+### ⚠️ Troubleshooting
+
+**Forgot the admin password.** Run the following in the Neon SQL Editor:
+
+```sql
+DELETE FROM kv WHERE key = 'admin';
 ```
 
-(Caddy: `min-voice.codeinsane.dev { reverse_proxy 127.0.0.1:3000 }` ใช้ได้เลย รองรับ WebSocket และ HTTPS อัตโนมัติ)
+The password resets to `changeme` when a new Vercel instance starts. Redeploy if you need the reset right away.

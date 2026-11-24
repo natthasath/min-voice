@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
-import { io, type Socket } from 'socket.io-client';
+import { useEffect, useState } from 'react';
 import type { Choice, PlayerView } from '../../shared/types';
+import { api, ApiError } from '../lib/api';
 import { syncClock } from '../lib/clock';
+import { usePoll } from '../lib/poll';
 import { load, save } from '../lib/storage';
 import { Eliminated } from './Eliminated';
 import { Lobby } from './Lobby';
@@ -12,30 +13,29 @@ import { Survived } from './Survived';
 import { Winner } from './Winner';
 
 const ID_KEY = 'minvoice.playerId';
+const POLL_MS = 1000;
+
+function fetchState() {
+  const id = load(ID_KEY);
+  return api<PlayerView>('GET', `/api/state${id ? `?id=${encodeURIComponent(id)}` : ''}`);
+}
 
 export function PlayerApp() {
-  const socketRef = useRef<Socket | null>(null);
   const [view, setView] = useState<PlayerView | null>(null);
   const [connected, setConnected] = useState(false);
   const [editing, setEditing] = useState(false);
   const [showStandings, setShowStandings] = useState(false);
 
-  useEffect(() => {
-    const socket = io();
-    socketRef.current = socket;
-    socket.on('connect', () => {
-      setConnected(true);
-      socket.emit('player:resume', load(ID_KEY));
-    });
-    socket.on('disconnect', () => setConnected(false));
-    socket.on('state', (v: PlayerView) => {
+  const refresh = usePoll(
+    fetchState,
+    (v) => {
       syncClock(v.serverNow);
       setView(v);
-    });
-    return () => {
-      socket.disconnect();
-    };
-  }, []);
+      setConnected(true);
+    },
+    () => setConnected(false),
+    POLL_MS,
+  );
 
   // Leave the standings overlay when the game moves on.
   useEffect(() => {
@@ -50,22 +50,24 @@ export function PlayerApp() {
     );
   }
 
-  const join = (name: string, color: string) =>
-    new Promise<string | null>((resolve) => {
-      socketRef.current?.emit(
-        'player:join',
-        { id: view.me?.id, name, color },
-        (res: { id?: string; error?: string }) => {
-          if (res.id) {
-            save(ID_KEY, res.id);
-            setEditing(false);
-          }
-          resolve(res.error ?? null);
-        },
-      );
-    });
+  const join = async (name: string, color: string) => {
+    try {
+      const res = await api<{ id: string }>('POST', '/api/join', { id: view.me?.id, name, color });
+      save(ID_KEY, res.id);
+      setEditing(false);
+      refresh();
+      return null;
+    } catch (e) {
+      return e instanceof ApiError ? e.message : 'เชื่อมต่อไม่ได้ กรุณาลองใหม่';
+    }
+  };
 
-  const answer = (choice: Choice) => socketRef.current?.emit('player:answer', choice);
+  const answer = async (choice: Choice) => {
+    // Show the pick at once; the next poll confirms what the server accepted.
+    setView((v) => (v ? { ...v, myAnswer: choice } : v));
+    await api('POST', '/api/answer', { id: view.me?.id, choice }).catch(() => {});
+    refresh();
+  };
 
   const me = view.me;
   if (!me || (editing && view.phase === 'lobby')) {

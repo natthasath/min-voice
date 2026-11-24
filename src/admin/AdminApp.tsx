@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { io, type Socket } from 'socket.io-client';
+import { useCallback, useEffect, useState } from 'react';
 import type { AdminView } from '../../shared/types';
 import { api, ApiError, getToken, setToken } from '../lib/api';
 import { syncClock } from '../lib/clock';
+import { usePoll } from '../lib/poll';
 import { linkTo, navigate } from '../lib/router';
 import { Control } from './Control';
 import { AdminHeader } from './AdminHeader';
@@ -13,11 +13,12 @@ import { Settings } from './Settings';
 
 type Auth = 'checking' | 'out' | 'in';
 
+const POLL_MS = 1000;
+
 export function AdminApp({ path }: { path: string }) {
   const [auth, setAuth] = useState<Auth>(getToken() ? 'checking' : 'out');
   const [passwordIsDefault, setPasswordIsDefault] = useState(false);
   const [view, setView] = useState<AdminView | null>(null);
-  const socketRef = useRef<Socket | null>(null);
 
   const signOut = useCallback(() => {
     setToken(null);
@@ -39,30 +40,36 @@ export function AdminApp({ path }: { path: string }) {
     if (auth === 'checking') refreshMe();
   }, [auth, refreshMe]);
 
-  useEffect(() => {
-    if (auth !== 'in') return;
-    const socket = io('/admin', { auth: { token: getToken() } });
-    socketRef.current = socket;
-    socket.on('state', (v: AdminView) => {
+  const refresh = usePoll(
+    () => api<AdminView>('GET', '/api/admin/state'),
+    (v) => {
       syncClock(v.serverNow);
       setView(v);
-    });
-    socket.on('connect_error', (err) => {
-      if (err.message === 'unauthorized') signOut();
-    });
-    socket.on('disconnect', (reason) => {
-      // The server drops admin sockets whose session was revoked (password changed elsewhere).
-      if (reason === 'io server disconnect') refreshMe();
-    });
-    return () => {
-      socket.disconnect();
-      socketRef.current = null;
-    };
-  }, [auth, signOut, refreshMe]);
+    },
+    // A 401 means the session expired or was revoked (password changed elsewhere).
+    (err) => {
+      if (err instanceof ApiError && err.status === 401) signOut();
+    },
+    POLL_MS,
+    auth === 'in',
+  );
 
-  const emit = useCallback((event: string, ...args: unknown[]) => {
-    socketRef.current?.emit(event, ...args);
-  }, []);
+  /** Runs a game action, e.g. emit('admin:start', ack) or emit('admin:settings', { shuffle: true }). */
+  const emit = useCallback(
+    async (event: string, ...args: unknown[]) => {
+      const ack = args.find((a) => typeof a === 'function') as ((err: string | null) => void) | undefined;
+      const payload = args.find((a) => typeof a !== 'function') ?? {};
+      try {
+        const res = await api<{ error: string | null }>('POST', `/api/admin/action/${event.replace(/^admin:/, '')}`, payload);
+        ack?.(res.error);
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 401) signOut();
+        ack?.(e instanceof Error ? e.message : 'เกิดข้อผิดพลาด');
+      }
+      refresh();
+    },
+    [refresh, signOut],
+  );
 
   const logout = async () => {
     await api('POST', '/api/admin/logout').catch(() => {});
